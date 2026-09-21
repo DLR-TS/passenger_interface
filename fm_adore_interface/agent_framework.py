@@ -106,8 +106,17 @@ class LLMAgent():
             The dictionary with the new messages.
         """
     
+        corrected_command = state["messages"][-1].content
+        corrected_command = re.sub(
+            r"^stt_correct_model:\s*",
+            "",
+            corrected_command,
+        )
         prompt = SystemMessage(
-            prompts.classification_prompt.format(car_actions_l=prompts.car_actions_l, command_txt=state["messages"][0].content)
+            prompts.classification_prompt.format(
+                car_actions_l=prompts.car_actions_l,
+                command_txt=corrected_command,
+            )
         )
         
         response = llm.invoke(prompt.content, config)

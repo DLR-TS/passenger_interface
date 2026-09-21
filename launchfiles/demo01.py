@@ -50,7 +50,15 @@ def generate_launch_description():
                 emulate_tty=True, 
                 #prefix="xterm -e ", # xhost +local:
                 parameters=[
-                    {'whisper_model_size': 'base.en'},
+                    {'whisper_model_size': 'large-v3-turbo'},
+                    {'whisper_device': 'cuda'},
+                    {'whisper_compute_type': 'float16'},
+                    {'whisper_language': 'en'},
+                    {
+                        'whisper_hotwords':
+                        'lane, roundabout, U-turn, start point, '
+                        'Spurwechsel, Kreisverkehr',
+                    },
                     {'only_simulate': False},
                 ]
             ),
@@ -64,8 +72,13 @@ def generate_launch_description():
                 emulate_tty=True, 
                 #prefix="xterm -e ", # xhost +local:
                 parameters=[
-                    {'whisper_model_size': 'tiny.en'},
-                    {'only_simulate': True},
+                    {'simulation': False},
+                    {
+                        'model_name':
+                        'qwen3.5:4b',
+                    },
+                    {'ollama_base_url': 'http://localhost:11434'},
+                    {'enable_stt_correction': True},
                 ]
             ),
             Node(

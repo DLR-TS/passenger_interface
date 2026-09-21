@@ -64,8 +64,7 @@ def generate_launch_description():
                 emulate_tty=True, 
                 prefix="xterm -e ", # xhost +local:
                 parameters=[
-                    {'whisper_model_size': 'tiny.en'},
-                    {'only_simulate': True},
+                    {'simulation': True},
                 ]
             ),
             Node(

@@ -153,9 +153,6 @@ class CommandDisseminationNode(Node):
             return float(numerical_detail[0])
         return self.std_factor
 
-
-
-
     def command_callback(self, msg):
         
         name = [k for k, v in PassengerRequest.__dict__.items() if v == msg.type and not k.startswith('_')][0]
@@ -165,18 +162,7 @@ class CommandDisseminationNode(Node):
 
             case PassengerRequest.SET_NEW_GOAL_POINT:
                 self.handle_new_goal(msg.numerical_detail, msg.text_detail)
-            # case PassengerRequest.DRIVE_MORE_SPORTILY:
-            #     self.handle_driving_style("sportily", self.get_factor_or_default(msg.numerical_detail))
-
-            # case PassengerRequest.DRIVE_MORE_COMFORTABLY:
-            #     self.handle_driving_style("comfortably", self.get_factor_or_default(msg.numerical_detail))
-
-            # case PassengerRequest.INCREASE_VELOCITY:
-            #     self.handle_driving_style("velocity_up", self.get_factor_or_default(msg.numerical_detail))
-
-            # case PassengerRequest.DECREASE_VELOCITY:
-            #     self.handle_driving_style("velocity_down", self.get_factor_or_default(msg.numerical_detail))
-
+                
             case PassengerRequest.EXECUTE_EMERGENCY_STOP:
                 self.get_logger().info("Forwarding emergency stop as PassengerRequest")
                 self.republisher.publish(msg)
@@ -369,15 +355,6 @@ class CommandDisseminationNode(Node):
         if updated_params:
             self.set_decision_maker_parameters(updated_params)
 
-
-
-
-        #updated_params = {
-        #    key: value * param_factor_dict[key]
-        #    for key, value in retrieved_params.items()
-        #    if value is not None 
-        #}
-        #self.set_decision_maker_parameters(updated_params)
     """
     functions to handle specific commands
     handle emergency stop

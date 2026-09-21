@@ -12,3 +12,6 @@ langgraph-prebuilt==0.2.2
 pandas==2.3.0
 python-dotenv==1.1.0
 scipy
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.25.0.15
+ollama==0.6.2
