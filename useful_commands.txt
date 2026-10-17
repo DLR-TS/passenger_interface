@@ -1,0 +1,53 @@
+to find active channel 
+
+python3 - <<'PY'
+import numpy as np
+import sounddevice as sd
+
+device = 4
+channels = 4
+rate = 48000(adore_venv) ADORe CLI: adore2_upstream_integration > python3 -m sounddevice
+0 sof-hda-dsp: - (hw:0,0), ALSA (2 in, 2 out)
+1 sof-hda-dsp: HDMI 1 (hw:0,3), ALSA (0 in, 8 out)
+2 sof-hda-dsp: HDMI 2 (hw:0,4), ALSA (0 in, 8 out)
+3 sof-hda-dsp: HDMI 3 (hw:0,5), ALSA (0 in, 8 out)
+4 sof-hda-dsp: - (hw:0,6), ALSA (4 in, 0 out)
+5 sof-hda-dsp: - (hw:0,31), ALSA (0 in, 2 out)
+6 sysdefault, ALSA (128 in, 128 out)
+7 lavrate, ALSA (128 in, 128 out)
+8 samplerate, ALSA (128 in, 128 out)
+9 speexrate, ALSA (128 in, 128 out)
+10 speex, ALSA (1 in, 1 out)
+11 upmix, ALSA (8 in, 8 out)
+12 vdownmix, ALSA (6 in, 6 out)
+- 13 default, ALSA (128 in, 128 out)
+  14 dmix, ALSA (0 in, 2 out)
+
+print(sd.query_devices(device, "input"))
+sd.check_input_settings(
+    device=device, channels=channels,
+    samplerate=rate, dtype="float32",
+)
+
+with sd.InputStream(
+    device=device, channels=channels,
+    samplerate=rate, dtype="float32",
+) as stream:
+    for _ in range(20):
+        audio, overflowed = stream.read(rate // 2)
+        rms = np.sqrt(np.mean(audio ** 2, axis=0))
+        print("Channel RMS:", np.round(rms, 5))
+PY
+
+
+
+to download whisper model
+export HF_HOME="${SOURCE_DIRECTORY:-$HOME}/.cache/huggingface"
+export HF_HUB_DISABLE_XET=1
+export HF_HUB_DOWNLOAD_TIMEOUT=120
+
+python3 - <<'PY'
+from faster_whisper import WhisperModel
+WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
+print("Whisper model cached")
+PY
