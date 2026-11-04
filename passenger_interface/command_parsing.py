@@ -33,6 +33,8 @@ class CommandAction(str, Enum):
     RESUME_RIDE = "RESUME_RIDE"
     KEEP_MORE_DISTANCE = "KEEP_MORE_DISTANCE"
     SET_NEW_GOAL_POINT = "SET_NEW_GOAL_POINT"
+    STOP_AT_NEXT_VIRTUAL_STOP = "STOP_AT_NEXT_VIRTUAL_STOP"
+    MOVE_FORWARD_SHORT_DISTANCE = "MOVE_FORWARD_SHORT_DISTANCE"
     UNKNOWN = "UNKNOWN"
 
 
@@ -101,9 +103,11 @@ def normalize_destination_text(destination: str) -> str:
 
 
 def extract_destination_text(command: str) -> str:
-    """Extract a named destination from a corrected English command."""
+    """Extract a named destination from a corrected command."""
     match = re.search(
-        r"(?:drive to|go to)\s+(.+)$",
+        r"(?:drive to|go to|"
+        r"(?:fahr|fahre|fahren sie|bring)(?: mich)?"
+        r" (?:zum|zur|nach|ins|in den|in die))\s+(.+)$",
         command,
         flags=re.IGNORECASE,
     )
@@ -112,6 +116,39 @@ def extract_destination_text(command: str) -> str:
 
     return normalize_destination_text(match.group(1))
 
+
+NUMBER_WORDS = {
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "ein": 1.0,
+    "einen": 1.0,
+    "eins": 1.0,
+    "zwei": 2.0,
+    "drei": 3.0,
+    "vier": 4.0,
+    "fuenf": 5.0,
+    "fünf": 5.0,
+}
+
+METER_PATTERN = r"(?:m\b|meter|metern|metre|meters)"
+
+
+def extract_distance_meters(text: str) -> float | None:
+    t = text.lower()
+
+    m = re.search(rf"(\d+(?:[.,]\d+)?)\s*{METER_PATTERN}", t)
+
+    if m:
+        return float(m.group(1).replace(",", "."))
+
+    for word, value in NUMBER_WORDS.items():
+        if re.search(rf"\b{word}\b\s*{METER_PATTERN}", t):
+            return value
+
+    return None
 
 def normalize_llm_command(output: str) -> str:
     """Convert an LLM response into a strict canonical command key."""
@@ -220,6 +257,20 @@ def simulation_classify(text: str) -> str:
         or "get out of the car" in command
     ):
         return "stop_and_let_sb_exit"
+
+    if (
+        "next stop" in command
+        or "next virtual stop" in command
+        or "at the next stop" in command
+    ):
+        return "stop_at_next_virtual_stop"
+
+    if (
+        "move forward" in command
+        or "pull forward" in command
+        or "move up a bit" in command
+    ):
+        return "move_forward_short_distance"
 
     if "park" in command:
         return "stop_and_park"

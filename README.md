@@ -22,8 +22,8 @@ flowchart LR
     C -->|passenger_interface/passenger_request<br/>PassengerRequest| D[command_dissemination]
     D -->|mission/goal_request| E[Mission control]
     D -->|passenger_request| F[Decision maker]
-    D -->|mission_command| F
-    D -->|emergency and return topics| E
+    F -->|emergency_stop_started| D
+    D -->|stop, move-forward and return topics| E
 ```
 
 ### Nodes and concepts
@@ -37,24 +37,25 @@ flowchart LR
    destination, roundabout exit, coordinate pair, or driving-style factor and
    publishes an `adore_ros2_msgs/msg/PassengerRequest`.
 3. **`command_dissemination`** turns requests requiring dedicated handling
-   into mission goals or mission commands. Other supported requests are
-   forwarded to the decision maker.
+   into mission goals or stop requests for `mission_control`. Every other
+   supported request is forwarded to the decision maker on `passenger_request`.
 
 Named destinations are configured in
 [`passenger_interface/locations.json`](passenger_interface/locations.json):
 
 ```json
 {
-  "airport": { "x": 603629.97, "y": 5793820.95 },
-  "supermarket": { "x": 30.0, "y": -12.0 }
+  "airport": { "x": 603629.97, "y": 5793820.95, "aliases": ["flughafen"] },
+  "supermarket": { "x": 30.0, "y": -12.0, "aliases": ["supermarkt", "markt"] }
 }
 ```
 
-Names are matched case-insensitively. Coordinates must use the same world/UTM
+Names are matched case-insensitively, and every entry in `aliases` resolves to
+the same position as its main name. Coordinates must use the same world/UTM
 coordinate system as the active ADORe map. A command such as `drive to the
-airport` resolves the name and publishes a stopping goal. A command containing
-two numbers, for example `drive to 606450.0 5797277.0`, uses those numbers
-directly as `x` and `y`.
+airport` or `Fahr zum Flughafen` resolves the name and publishes a stopping
+goal. A command containing two numbers, for example `drive to 606450.0 5797277.0`, uses
+those numbers directly as `x` and `y`. An unknown name logs a warning.
 
 ## ROS interface
 
@@ -70,9 +71,22 @@ default launch namespace is `/ego_vehicle`.
 | `command_dissemination` | subscribe | `emergency_stop_started` | emergency-stop feedback |
 | `command_dissemination` | publish | `passenger_request` | requests handled by the decision maker |
 | `command_dissemination` | publish | `mission/goal_request` | `adore_ros2_msgs/msg/GoalPoint` |
-| `command_dissemination` | publish | `mission_command` | `adore_ros2_msgs/msg/MissionCommand` |
-| `command_dissemination` | publish | `emergency_stop_request` | `std_msgs/msg/Bool` |
 | `command_dissemination` | publish | `mission/drive_back_to_start` | `std_msgs/msg/Bool` |
+| `command_dissemination` | publish | `mission/stop_at_next_virtual_stop` | `std_msgs/msg/Bool` stop at the next virtual stop |
+| `command_dissemination` | publish | `mission/move_forward` | `std_msgs/msg/Float64` distance in meters |
+| `command_dissemination` | publish | `mission/resume_ride` | `std_msgs/msg/Bool` continue after a stop |
+
+## Virtual stops
+
+Relevant `mission_control` parameters:
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `virtual_stops` | empty | List of `x,y[,label]` strings. |
+| `min_stop_distance` | `15.0` | A stop is only selected this far ahead of the vehicle. |
+| `max_stop_lateral_offset` | `10.0` | Stops farther than this from the route are ignored. |
+| `min_move_forward_distance` | `0.5` | Lower bound for "move forward". |
+| `max_move_forward_distance` | `20.0` | Upper bound for "move forward". |
 
 ## Build and prerequisites
 
@@ -366,6 +380,7 @@ individual node. Audio parameters are not declared when `only_simulate` is
 | `min_audio_rms` | double | `0.005` | RMS level at or above which a chunk is considered speech. |
 | `max_no_speech_probability` | double | `0.6` | Discard Whisper segments whose no-speech probability exceeds this value. |
 | `vad_filter` | bool | `true` | Enable Faster-Whisper's voice-activity filter during transcription. |
+| `max_audio_backlog_seconds` | double | `2.0` | Discard buffered audio once transcription falls this far behind. |
 
 ### `text_to_command`
 
@@ -374,6 +389,7 @@ individual node. Audio parameters are not declared when `only_simulate` is
 | `model_name` | string | `qwen3.5:4b` | Ollama model used for correction and classification. |
 | `ollama_base_url` | string | `http://localhost:11434` | Ollama-compatible server base URL. |
 | `enable_stt_correction` | bool | `true` | Allow minimal transcript correction in the constrained LLM request. |
+| `ollama_timeout` | double | `10.0` | Request timeout in seconds for one Ollama call. |
 | `simulation` | bool | `false` | Use the local rule-based classifier instead of Ollama. |
 
 ### `command_dissemination`
@@ -383,6 +399,7 @@ individual node. Audio parameters are not declared when `only_simulate` is
 | `location_table_path` | string | empty | Path to the named-destination JSON file. The main launch file supplies the packaged `locations.json`. |
 | `default_goal_x` | double | `0.0` | Fallback X coordinate when a destination name is unknown. The main launch default is `606471.04`. |
 | `default_goal_y` | double | `0.0` | Fallback Y coordinate when a destination name is unknown. The main launch default is `5797161.11`. |
+| `default_move_forward_distance` | double | `3.0` | Distance used for "move forward" when the request has no number. |
 
 ### Main launch arguments
 
@@ -395,6 +412,7 @@ namespace. Values not listed here retain the node defaults shown above.
 | `model_name` | `qwen3.5:4b` |
 | `ollama_base_url` | `http://localhost:11434` |
 | `enable_stt_correction` | `True` |
+| `ollama_timeout` | `10.0` |
 | `simulation` | `False` |
 | `whisper_model_size` | `large-v3-turbo` |
 | `whisper_device` | `cuda` |
@@ -406,8 +424,18 @@ namespace. Values not listed here retain the node defaults shown above.
 | `audio_channel` | `3` |
 | `audio_sample_rate` | `48000` |
 | `end_silence_duration` | `1.2` |
+| `max_audio_backlog_seconds` | `2.0` |
+| `audio_chunk_duration` | `0.1` |
+| `pre_roll_duration` | `0.3` |
+| `max_utterance_duration` | `8.0` |
+| `min_audio_rms` | `0.005` |
+| `max_no_speech_probability` | `0.6` |
+| `vad_filter` | `True` |
+| `only_simulate` | `False` |
 | `default_goal_x` | `606471.04` |
 | `default_goal_y` | `5797161.11` |
+| `location_table_path` | the packaged `locations.json` |
+| `default_move_forward_distance` | `3.0` |
 
 Inspect the effective runtime configuration with:
 

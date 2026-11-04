@@ -1,5 +1,6 @@
 import re
 from collections import deque
+from queue import Empty
 
 import numpy
 
@@ -27,6 +28,13 @@ class UtteranceBuffer:
         self._max_utterance_samples = int(
             sample_rate * max_utterance_duration
         )
+        self._utterance = []
+        self._utterance_samples = 0
+        self._silence_samples = 0
+        self._recording = False
+
+    def reset(self) -> None:
+        self._pre_roll.clear()
         self._utterance = []
         self._utterance_samples = 0
         self._silence_samples = 0
@@ -83,6 +91,18 @@ class UtteranceBuffer:
         self._recording = False
 
         return completed_audio, speech_started
+
+
+def drain_audio_queue(audio_queue, chunk_duration: float) -> float:
+    """Remove queued audio chunks"""
+    discarded_chunks = 0
+    while True:
+        try:
+            audio_queue.get_nowait()
+        except Empty:
+            break
+        discarded_chunks += 1
+    return discarded_chunks * chunk_duration
 
 
 def calculate_blocksize(sample_rate: int, duration: float) -> int:

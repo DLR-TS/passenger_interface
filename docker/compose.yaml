@@ -1,0 +1,68 @@
+# speech_to_text and text_to_command only
+#
+#   docker compose up speech-to-command-pipeline-gpu
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  network_mode: host
+  stdin_open: true
+  tty: true
+  volumes:
+    - ${PASSENGER_INTERFACE_PATH:-..}:/workspace/src/passenger_interface
+    - ${ADORE_ROS2_MSGS_PATH:-../../../adore_ros2_msgs}:/workspace/src/adore_ros2_msgs
+    - whisper_cache:/workspace/.cache/huggingface
+    - pipeline_build:/opt/pipeline_build
+    - pipeline_install:/opt/pipeline_install
+
+services:
+  # Whisper on the CPU, doesnt really work
+  speech-to-command-pipeline:
+    <<: *common
+    container_name: speech_to_command_pipeline
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - "${AUDIO_GID:-29}"
+    command: >
+      ros2 launch passenger_interface speech_to_command_pipeline.py
+      whisper_device:=cpu
+      whisper_compute_type:=int8
+      only_simulate:=${ONLY_SIMULATE:-True}
+      simulation:=${SIMULATION:-False}
+      audio_device:=${AUDIO_DEVICE:--1}
+      audio_channels:=${AUDIO_CHANNELS:-1}
+      audio_channel:=${AUDIO_CHANNEL:-0}
+      audio_sample_rate:=${AUDIO_SAMPLE_RATE:-48000}
+
+  # Whisper on the GPU requires the nvidia container toolkit
+  speech-to-command-pipeline-gpu:
+    <<: *common
+    container_name: speech_to_command_pipeline_gpu
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - "${AUDIO_GID:-29}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      ros2 launch passenger_interface speech_to_command_pipeline.py
+      whisper_device:=cuda
+      whisper_compute_type:=float16
+      only_simulate:=${ONLY_SIMULATE:-False}
+      simulation:=${SIMULATION:-False}
+      audio_device:=${AUDIO_DEVICE:--1}
+      audio_channels:=${AUDIO_CHANNELS:-1}
+      audio_channel:=${AUDIO_CHANNEL:-0}
+      audio_sample_rate:=${AUDIO_SAMPLE_RATE:-48000}
+
+volumes:
+  whisper_cache:
+  pipeline_build:
+  pipeline_install:

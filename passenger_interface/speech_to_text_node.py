@@ -2,7 +2,6 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 import sounddevice
-import numpy as numpy
 import queue
 import threading
 from faster_whisper import WhisperModel
@@ -10,22 +9,16 @@ from huggingface_hub.utils import (
     LocalEntryNotFoundError
 )
 import sys
-import time
+from time import monotonic
 from scipy.signal import resample_poly
 
 from .speech_to_text_utils import (
     calculate_blocksize,
     calculate_rms,
+    drain_audio_queue,
     is_meaningful_transcript,
     UtteranceBuffer,
 )
-
-
-try:
-    import tty
-    import termios
-except ImportError:
-    termios = None
 
 
 SAMPLE_RATE = 16000
@@ -35,12 +28,15 @@ PRE_ROLL_DURATION = 0.3
 MAX_UTTERANCE_DURATION = 8.0
 MIN_AUDIO_RMS = 0.005
 MAX_NO_SPEECH_PROBABILITY = 0.6
+MAX_AUDIO_BACKLOG_SECONDS = 2.0
 WHISPER_MODEL_SIZE = "large-v3-turbo"
 WHISPER_DEVICE = "cuda"
 WHISPER_COMPUTE_TYPE = "float16"
 WHISPER_LANGUAGE = ""
 WHISPER_HOTWORDS = (
-    "lane, roundabout, U-turn, start point, Spurwechsel, Kreisverkehr"
+    "Haltestelle, anhalten, aussteigen, einsteigen, "
+    "weiterfahren, Spurwechsel, Kreisverkehr, Abstand, "
+    "wenden, Startpunkt, Flughafen"
 )
 
 
@@ -159,6 +155,10 @@ class SpeechToTextNode(Node):
             MAX_NO_SPEECH_PROBABILITY,
         )
         self.declare_parameter("vad_filter", True)
+        self.declare_parameter(
+            "max_audio_backlog_seconds",
+            MAX_AUDIO_BACKLOG_SECONDS,
+        )
     
         self.audio_device = (
             self.get_parameter("audio_device")
@@ -224,6 +224,12 @@ class SpeechToTextNode(Node):
             self.get_parameter("vad_filter")
             .get_parameter_value()
             .bool_value
+        )
+
+        self.max_audio_backlog_seconds = (
+            self.get_parameter("max_audio_backlog_seconds")
+            .get_parameter_value()
+            .double_value
         )
 
         self.get_logger().info("sound devices:")
@@ -310,6 +316,12 @@ class SpeechToTextNode(Node):
         if self.min_audio_rms < 0.0:
             raise ValueError("min_audio_rms must not be negative")
 
+        if self.max_audio_backlog_seconds <= self.audio_chunk_duration:
+            raise ValueError(
+                "max_audio_backlog_seconds must be longer than "
+                "audio_chunk_duration"
+            )
+
         if not 0.0 <= self.max_no_speech_probability <= 1.0:
             raise ValueError(
                 "max_no_speech_probability must be between 0 and 1"
@@ -319,7 +331,10 @@ class SpeechToTextNode(Node):
         if status:
             self.get_logger().warning(str(status))
         # Just put the raw audio data into the queue
-        self.audio_queue.put(indata[:, self.audio_channel].copy())
+        self.audio_queue.put((
+            monotonic(),
+            indata[:, self.audio_channel].copy(),
+        ))
 
     def publish_string(self, text, log = False):
         msg = String()
@@ -341,10 +356,23 @@ class SpeechToTextNode(Node):
 
         while self.running:
             try:
-                audio = self.audio_queue.get(timeout=1)
+                captured_at, audio = self.audio_queue.get(timeout=1)
+
+                backlog = monotonic() - captured_at
+                if backlog > self.max_audio_backlog_seconds:
+                    discarded = self.audio_chunk_duration + drain_audio_queue(
+                        self.audio_queue,
+                        self.audio_chunk_duration,
+                    )
+                    utterance_buffer.reset()
+                    self.get_logger().warning(
+                        f"Transcription is {backlog:.1f} s behind the "
+                        f"microphone. Discarded {discarded:.1f} s of audio."
+                    )
+                    continue
 
                 audio_rms = calculate_rms(audio)
-                now = time.monotonic()
+                now = monotonic()
                 if now - last_level_log >= 1.0:
                     self.get_logger().debug(
                         f"Selected-channel audio RMS: {audio_rms:.5f}"

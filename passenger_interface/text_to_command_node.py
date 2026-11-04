@@ -7,6 +7,7 @@ from std_msgs.msg import String
 from .command_parsing import (
     CANONICAL_COMMANDS,
     extract_destination_text,
+    extract_distance_meters,
     normalize_llm_command,
     simulation_classify,
     UNKNOWN_COMMAND,
@@ -35,6 +36,8 @@ CMD_TO_TYPE = {
     "keep_more_distance": PassengerRequest.KEEP_MORE_DISTANCE,
     "leave_roundabout_at_exit_x": PassengerRequest.LEAVE_ROUNDABOUT_AT_EXIT_X,
     "set_new_goal_point": PassengerRequest.SET_NEW_GOAL_POINT,
+    "stop_at_next_virtual_stop": PassengerRequest.STOP_AT_NEXT_VIRTUAL_STOP,
+    "move_forward_short_distance": PassengerRequest.MOVE_FORWARD_SHORT_DISTANCE,
 }
 
 unmapped_commands = CANONICAL_COMMANDS.difference(CMD_TO_TYPE)
@@ -123,6 +126,14 @@ def build_passenger_request(class_key: str, original_text: str, stamp_msg) -> Pa
         req.numerical_detail = [exit_no]
         return req
 
+    # short forward movement, e.g. to clear a puddle in front of the door
+    if key == "move_forward_short_distance":
+        req.type = PassengerRequest.MOVE_FORWARD_SHORT_DISTANCE
+        distance = extract_distance_meters(original_text)
+        if distance is not None:
+            req.numerical_detail = [distance]
+        return req
+
     # destination extraction: "drive to X" / "go to X"
     if key == "set_new_goal_point":
         req.type = PassengerRequest.SET_NEW_GOAL_POINT
@@ -183,6 +194,7 @@ class TextToCommandNode(Node):
             "http://localhost:11434",
         )
         self.declare_parameter("enable_stt_correction", True)
+        self.declare_parameter("ollama_timeout", 10.0)
         self.declare_parameter("simulation", False)
         self._model_name = self.get_parameter("model_name").get_parameter_value().string_value
         self._ollama_base_url = (
@@ -196,6 +208,11 @@ class TextToCommandNode(Node):
             .get_parameter_value()
             .bool_value
         )
+        self._ollama_timeout = (
+            self.get_parameter("ollama_timeout")
+            .get_parameter_value()
+            .double_value
+        )
         self.get_logger().info(f"Simulation mode: {self._simulation}")
 
         self._llm_workflow = None
@@ -206,11 +223,13 @@ class TextToCommandNode(Node):
                     self._model_name,
                     self._ollama_base_url,
                     self._enable_stt_correction,
+                    self._ollama_timeout,
                 )
                 self.get_logger().info(
                     f"LLM enabled (model={self._model_name}, "
                     f"base_url={self._ollama_base_url}, "
-                    f"stt_correction={self._enable_stt_correction})"
+                    f"stt_correction={self._enable_stt_correction}, "
+                    f"timeout={self._ollama_timeout:.1f}s)"
                 )
             except Exception as e:
                 self.get_logger().error(

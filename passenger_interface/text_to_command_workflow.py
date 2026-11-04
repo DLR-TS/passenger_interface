@@ -14,6 +14,7 @@ class TextToCommandWorkflow:
         model_name,
         base_url="http://localhost:11434",
         enable_stt_correction=True,
+        timeout=10.0,
         client=None,
     ):
         self.model_name = model_name
@@ -26,7 +27,7 @@ class TextToCommandWorkflow:
 
         client_options = {
             "host": base_url,
-            "timeout": 30.0,
+            "timeout": timeout,
         }
         token = config_file.llm_param.get("openweb_ui_token", "").strip()
         if token:

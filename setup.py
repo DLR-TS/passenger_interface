@@ -40,7 +40,7 @@ setup(
     maintainer_email='vboxuser@todo.todo',
     description='TODO: Package description',
     license='EPL-2.0',
-    #tests_require=['pytest'],
+    extras_require={'test': ['pytest']},
     entry_points={
         'console_scripts': [
             'speech_to_text = passenger_interface.speech_to_text_node:main',

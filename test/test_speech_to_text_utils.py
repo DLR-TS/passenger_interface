@@ -1,8 +1,12 @@
+import queue
+
 import numpy
+import pytest
 
 from passenger_interface.speech_to_text_utils import (
     calculate_blocksize,
     calculate_rms,
+    drain_audio_queue,
     is_meaningful_transcript,
     UtteranceBuffer,
 )
@@ -59,6 +63,47 @@ def test_utterance_buffer_joins_speech_until_end_silence():
     assert not started
     assert completed.size == 60
     assert numpy.count_nonzero(completed) == 20
+
+
+def test_utterance_buffer_reset_drops_a_partial_utterance():
+    buffer = UtteranceBuffer(
+        sample_rate=16000,
+        chunk_duration=0.1,
+        pre_roll_duration=0.1,
+        end_silence_duration=0.2,
+        max_utterance_duration=8.0,
+    )
+    chunk = numpy.ones(1600, dtype=numpy.float32)
+
+    buffer.add(chunk, True)
+    buffer.add(chunk, True)
+    buffer.reset()
+
+    completed, speech_started = buffer.add(chunk, True)
+
+    assert speech_started
+    assert completed is None
+
+    completed, _ = buffer.add(numpy.zeros(1600, dtype=numpy.float32), False)
+    completed, _ = buffer.add(numpy.zeros(1600, dtype=numpy.float32), False)
+
+    assert completed is not None
+    assert completed.size == 3 * 1600
+
+
+def test_drain_audio_queue_reports_the_discarded_duration():
+    audio_queue = queue.Queue()
+    for _ in range(7):
+        audio_queue.put((0.0, numpy.zeros(1600, dtype=numpy.float32)))
+
+    discarded = drain_audio_queue(audio_queue, chunk_duration=0.1)
+
+    assert discarded == pytest.approx(0.7)
+    assert audio_queue.empty()
+
+
+def test_drain_audio_queue_on_an_empty_queue():
+    assert drain_audio_queue(queue.Queue(), chunk_duration=0.1) == 0.0
 
 
 def test_utterance_buffer_enforces_maximum_duration():
