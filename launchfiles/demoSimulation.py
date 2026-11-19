@@ -11,6 +11,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     SetEnvironmentVariable,
 )
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -42,7 +43,9 @@ def generate_launch_description():
     model_name = LaunchConfiguration("model_name")
     ollama_base_url = LaunchConfiguration("ollama_base_url")
     enable_stt_correction = LaunchConfiguration("enable_stt_correction")
+    ollama_timeout = LaunchConfiguration("ollama_timeout")
     simulation = LaunchConfiguration("simulation")
+    only_simulate = LaunchConfiguration("only_simulate")
 
     whisper_model_size = LaunchConfiguration("whisper_model_size")
     whisper_device = LaunchConfiguration("whisper_device")
@@ -54,6 +57,21 @@ def generate_launch_description():
     audio_channel = LaunchConfiguration("audio_channel")
     audio_sample_rate = LaunchConfiguration("audio_sample_rate")
     end_silence_duration = LaunchConfiguration("end_silence_duration")
+    max_audio_backlog_seconds = LaunchConfiguration(
+        "max_audio_backlog_seconds"
+    )
+    audio_chunk_duration = LaunchConfiguration("audio_chunk_duration")
+    pre_roll_duration = LaunchConfiguration("pre_roll_duration")
+    max_utterance_duration = LaunchConfiguration("max_utterance_duration")
+    min_audio_rms = LaunchConfiguration("min_audio_rms")
+    max_no_speech_probability = LaunchConfiguration(
+        "max_no_speech_probability"
+    )
+    vad_filter = LaunchConfiguration("vad_filter")
+    location_table_path = LaunchConfiguration("location_table_path")
+    default_move_forward_distance = LaunchConfiguration(
+        "default_move_forward_distance"
+    )
 
     default_goal_x = LaunchConfiguration("default_goal_x")
     default_goal_y = LaunchConfiguration("default_goal_y")
@@ -99,6 +117,11 @@ def generate_launch_description():
             description="Correct transcripts in the Ollama request.",
         ),
         DeclareLaunchArgument(
+            "ollama_timeout",
+            default_value="10.0",
+            description="Request timeout for the Ollama server in seconds.",
+        ),
+        DeclareLaunchArgument(
             "simulation",
             default_value="False",
             description="Use the rule-based classifier instead of Ollama.",
@@ -126,18 +149,57 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "whisper_hotwords",
             default_value=(
-                "lane, roundabout, U-turn, start point, "
-                "Spurwechsel, Kreisverkehr"
+                "Haltestelle, anhalten, aussteigen, einsteigen, "
+                "weiterfahren, Spurwechsel, Kreisverkehr, Abstand, "
+                "wenden, Startpunkt, Flughafen"
             ),
         ),
+        # PortAudio input device index, -1 for the default
         DeclareLaunchArgument("audio_device", default_value="4"),
+        # channels opened on that device
         DeclareLaunchArgument("audio_channels", default_value="4"),
+        # channel used for recognition
         DeclareLaunchArgument("audio_channel", default_value="3"),
+        # input sample rate in Hz
         DeclareLaunchArgument("audio_sample_rate", default_value="48000"),
+        # length of one captured audio block
+        DeclareLaunchArgument("audio_chunk_duration", default_value="0.1"),
+        # audio kept before speech is detected
+        DeclareLaunchArgument("pre_roll_duration", default_value="0.3"),
+        # hard cut for single utterance
+        DeclareLaunchArgument("max_utterance_duration", default_value="8.0"),
+        # loudness threshold for speech
+        DeclareLaunchArgument("min_audio_rms", default_value="0.005"),
+        # no-speech threshold
+        DeclareLaunchArgument(
+            "max_no_speech_probability",
+            default_value="0.6",
+        ),
+        # remove non-speech parts by whisper
+        DeclareLaunchArgument("vad_filter", default_value="True"),
+        # read commands from terminal
+        DeclareLaunchArgument("only_simulate", default_value="False"),
+        # start it with ros2 run for keyboard input
+        DeclareLaunchArgument("start_speech_to_text", default_value="True"),
         DeclareLaunchArgument(
             "end_silence_duration",
             default_value="1.2",
             description="Silence required before an utterance is complete.",
+        ),
+        DeclareLaunchArgument(
+            "max_audio_backlog_seconds",
+            default_value="2.0",
+            description="Maximum delay before buffered audio is discarded.",
+        ),
+        # named destinations and aliases
+        DeclareLaunchArgument(
+            "location_table_path",
+            default_value=str(locations_file),
+        ),
+        # default distance for move forward
+        DeclareLaunchArgument(
+            "default_move_forward_distance",
+            default_value="3.0",
         ),
         DeclareLaunchArgument(
             "default_goal_x",
@@ -165,10 +227,14 @@ def generate_launch_description():
             executable="speech_to_text",
             name="speech_to_text",
             namespace=namespace,
+            condition=IfCondition(LaunchConfiguration("start_speech_to_text")),
             output="screen",
             emulate_tty=True,
             parameters=[{
-                "only_simulate": False,
+                "only_simulate": ParameterValue(
+                    only_simulate,
+                    value_type=bool,
+                ),
                 "whisper_model_size": whisper_model_size,
                 "whisper_device": whisper_device,
                 "whisper_compute_type": whisper_compute_type,
@@ -194,6 +260,34 @@ def generate_launch_description():
                     end_silence_duration,
                     value_type=float,
                 ),
+                "max_audio_backlog_seconds": ParameterValue(
+                    max_audio_backlog_seconds,
+                    value_type=float,
+                ),
+                "audio_chunk_duration": ParameterValue(
+                    audio_chunk_duration,
+                    value_type=float,
+                ),
+                "pre_roll_duration": ParameterValue(
+                    pre_roll_duration,
+                    value_type=float,
+                ),
+                "max_utterance_duration": ParameterValue(
+                    max_utterance_duration,
+                    value_type=float,
+                ),
+                "min_audio_rms": ParameterValue(
+                    min_audio_rms,
+                    value_type=float,
+                ),
+                "max_no_speech_probability": ParameterValue(
+                    max_no_speech_probability,
+                    value_type=float,
+                ),
+                "vad_filter": ParameterValue(
+                    vad_filter,
+                    value_type=bool,
+                ),
             }],
         ),
         Node(
@@ -214,6 +308,10 @@ def generate_launch_description():
                     enable_stt_correction,
                     value_type=bool,
                 ),
+                "ollama_timeout": ParameterValue(
+                    ollama_timeout,
+                    value_type=float,
+                ),
             }],
         ),
         Node(
@@ -224,13 +322,17 @@ def generate_launch_description():
             output="screen",
             emulate_tty=True,
             parameters=[{
-                "location_table_path": str(locations_file),
+                "location_table_path": location_table_path,
                 "default_goal_x": ParameterValue(
                     default_goal_x,
                     value_type=float,
                 ),
                 "default_goal_y": ParameterValue(
                     default_goal_y,
+                    value_type=float,
+                ),
+                "default_move_forward_distance": ParameterValue(
+                    default_move_forward_distance,
                     value_type=float,
                 ),
             }],

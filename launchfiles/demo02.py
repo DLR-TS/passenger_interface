@@ -1,6 +1,5 @@
 from launch import LaunchDescription
-from launch_ros.actions import Node, ComposableNodeContainer
-from launch_ros.descriptions import ComposableNode
+from launch_ros.actions import Node
 import os
 import sys
 base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))),"adore_scenarios")
@@ -9,7 +8,6 @@ if base_dir not in sys.path:
     sys.path.insert(0, base_dir)
 from scenario_helpers.simulated_vehicle import create_simulated_vehicle_nodes
 from scenario_helpers.simulated_vehicle import Position
-from scenario_helpers.visualizer import create_visualization_nodes
 
 start_position = Position(utm=(606450.2677, 5797277.124, 32, 'N'), psi=1.5)
 goal_position = Position(utm=(606528.44, 5797310.56, 32, 'N'))

@@ -1,6 +1,8 @@
 # speech_to_text and text_to_command only
 #
 #   docker compose up speech-to-command-pipeline-gpu
+#
+# ollama is expected on the host at localhost:11434
 
 x-common: &common
   build:
@@ -29,6 +31,7 @@ services:
       ros2 launch passenger_interface speech_to_command_pipeline.py
       whisper_device:=cpu
       whisper_compute_type:=int8
+      model_name:=${OLLAMA_MODEL:-qwen3.5:4b}
       only_simulate:=${ONLY_SIMULATE:-True}
       simulation:=${SIMULATION:-False}
       audio_device:=${AUDIO_DEVICE:--1}
@@ -55,6 +58,7 @@ services:
       ros2 launch passenger_interface speech_to_command_pipeline.py
       whisper_device:=cuda
       whisper_compute_type:=float16
+      model_name:=${OLLAMA_MODEL:-qwen3.5:4b}
       only_simulate:=${ONLY_SIMULATE:-False}
       simulation:=${SIMULATION:-False}
       audio_device:=${AUDIO_DEVICE:--1}

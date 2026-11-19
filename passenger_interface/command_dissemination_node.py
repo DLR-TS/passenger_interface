@@ -2,18 +2,15 @@ import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter, ParameterValue
 from rcl_interfaces.srv import SetParameters, GetParameters, ListParameters
-from rcl_interfaces.msg import SetParametersResult, ParameterType
-from std_msgs.msg import String
+from rcl_interfaces.msg import ParameterType
 from functools import partial
-from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
+from rclpy.callback_groups import ReentrantCallbackGroup
 import time
 import json
 from pathlib import Path
-from functools import partial
 from adore_ros2_msgs.msg import PassengerRequest
 from adore_ros2_msgs.msg import GoalPoint
 import std_msgs.msg
-from adore_ros2_msgs.msg import MissionCommand
 
 
 class CommandDisseminationNode(Node):
@@ -39,13 +36,21 @@ class CommandDisseminationNode(Node):
             GoalPoint,
             'mission/goal_request',
             10)
-        self.emergency_publisher = self.create_publisher(
-            std_msgs.msg.Bool,
-            'emergency_stop_request',
-            10)
         self.back_to_start_publisher = self.create_publisher(
             std_msgs.msg.Bool,
             'mission/drive_back_to_start',
+            10)
+        self.virtual_stop_publisher = self.create_publisher(
+            std_msgs.msg.Bool,
+            'mission/stop_at_next_virtual_stop',
+            10)
+        self.move_forward_publisher = self.create_publisher(
+            std_msgs.msg.Float64,
+            'mission/move_forward',
+            10)
+        self.resume_ride_publisher = self.create_publisher(
+            std_msgs.msg.Bool,
+            'mission/resume_ride',
             10)
         
         # Subscriber to the incoming passenger requests
@@ -55,18 +60,12 @@ class CommandDisseminationNode(Node):
             self.command_callback,
             10)
         self.feedback_subscription_emergency_stop = self.create_subscription(
-            std_msgs.msg.String,
+            std_msgs.msg.Bool,
             'emergency_stop_started',
             self.emergency_stop_feedback_callback,
             10)
         self.subscription  # prevent unused variable warning
-        
-        self._next_command_id = 1
-        self.mission_command_publisher = self.create_publisher(
-            MissionCommand,
-              'mission_command',   
-            10
-        )
+
         self.decision_maker_node_name = "decision_maker"
         self.decision_maker_node_param_list_client = self.create_client(
             ListParameters,
@@ -103,6 +102,13 @@ class CommandDisseminationNode(Node):
             self.get_parameter("default_goal_y").get_parameter_value().double_value,
         )
 
+        self.declare_parameter("default_move_forward_distance", 3.0)
+        self.default_move_forward_distance = (
+            self.get_parameter("default_move_forward_distance")
+            .get_parameter_value()
+            .double_value
+        )
+
         self.location_table = self.load_location_table(self.location_table_path)
         self.get_logger().info("Command Dissemination Node has started successfully.")
 
@@ -124,9 +130,17 @@ class CommandDisseminationNode(Node):
                 key = str(name).lower().strip()
 
                 if isinstance(value, dict):
-                    table[key] = (float(value["x"]), float(value["y"]))
+                    position = (float(value["x"]), float(value["y"]))
+                    names = [key] + [
+                        str(alias).lower().strip()
+                        for alias in value.get("aliases", [])
+                    ]
                 else:
-                    table[key] = (float(value[0]), float(value[1]))
+                    position = (float(value[0]), float(value[1]))
+                    names = [key]
+
+                for name_variant in names:
+                    table[name_variant] = position
 
             self.get_logger().info(f"Loaded {len(table)} named goal locations.")
             return table
@@ -146,6 +160,23 @@ class CommandDisseminationNode(Node):
             f"Unknown destination '{name}'. Using default goal {self.default_goal}."
         )
         return self.default_goal
+
+
+    def handle_stop_at_next_virtual_stop(self, reason: str) -> None:
+        self.get_logger().info(
+            f"Requesting a stop at the next virtual stop ({reason})."
+        )
+        self.virtual_stop_publisher.publish(std_msgs.msg.Bool(data=True))
+
+
+    def handle_move_forward(self, numerical_detail) -> None:
+        if numerical_detail and len(numerical_detail) >= 1:
+            distance = float(numerical_detail[0])
+        else:
+            distance = self.default_move_forward_distance
+
+        self.get_logger().info(f"Requesting to move forward {distance:.2f} m.")
+        self.move_forward_publisher.publish(std_msgs.msg.Float64(data=distance))
 
 
     def get_factor_or_default(self, numerical_detail) -> float:
@@ -171,18 +202,30 @@ class CommandDisseminationNode(Node):
                 self.get_logger().info("perform lane following")
 
             case PassengerRequest.EXECUTE_LANE_CHANGE_LEFT:
-                self.publish_mission_command(MissionCommand.CHANGE_LANE_LEFT)
+                self.get_logger().info(
+                    "Forwarding lane change left as PassengerRequest")
+                self.republisher.publish(msg)
+
             case PassengerRequest.EXECUTE_LANE_CHANGE_RIGHT:
-                self.publish_mission_command(MissionCommand.CHANGE_LANE_RIGHT)
+                self.get_logger().info(
+                    "Forwarding lane change right as PassengerRequest")
+                self.republisher.publish(msg)
+
             case PassengerRequest.STOP_AND_LET_SB_BOARD:
-                self.get_logger().info("stop and let sb board")
+                self.handle_stop_at_next_virtual_stop("let somebody board")
 
             case PassengerRequest.STOP_AND_LET_SB_EXIT:
-                self.get_logger().info("stop and let sb exit (not yet implemented)")
+                self.handle_stop_at_next_virtual_stop("let somebody exit")
+
+            case PassengerRequest.STOP_AT_NEXT_VIRTUAL_STOP:
+                self.handle_stop_at_next_virtual_stop("stop requested")
+
+            case PassengerRequest.MOVE_FORWARD_SHORT_DISTANCE:
+                self.handle_move_forward(msg.numerical_detail)
 
             case PassengerRequest.STOP_AND_PARK:
-                #self.get_logger().info("stop and park (not yet implemented)")
-                self.publish_mission_command(MissionCommand.STOP_AND_PARK)
+                self.get_logger().info("Forwarding stop and park as PassengerRequest")
+                self.republisher.publish(msg)
 
             case PassengerRequest.STAY_BEHIND_THE_VEHICLE_AHEAD:
                 #self.handle_driving_style("no_overtake")
@@ -221,6 +264,7 @@ class CommandDisseminationNode(Node):
             case PassengerRequest.RESUME_RIDE:
                 self.get_logger().info("Forwarding resume ride as PassengerRequest")
                 self.republisher.publish(msg)
+                self.resume_ride_publisher.publish(std_msgs.msg.Bool(data=True))
             # case PassengerRequest.KEEP_MORE_DISTANCE:
             #     self.handle_driving_style("keep_more_distance")
             #     #self.get_logger().info("set parameters for distance keeping")
@@ -366,40 +410,17 @@ class CommandDisseminationNode(Node):
     ...
     """
 
-    def publish_mission_command(self, command: int, enable: bool = True,
-                            arg_int: int = 0, arg_float: float = 0.0):
-        msg = MissionCommand()
-        msg.command_id = self._next_command_id
-        self._next_command_id += 1
-        msg.command = command
-        msg.enable = enable
-        msg.arg_int = arg_int
-        msg.arg_float = arg_float
-        self.mission_command_publisher.publish(msg)
-        self.get_logger().info(
-            f"Published MissionCommand id={msg.command_id}, command={msg.command}, "
-            f"enable={msg.enable}, arg_int={msg.arg_int}, arg_float={msg.arg_float}"
-    )
     def emergency_stop_feedback_callback(self, msg):
         if msg.data:
             self.get_logger().info("Emergency stop has been started by decision_maker.")
         else:
             self.get_logger().info("Emergency stop has been cleared by decision_maker.")
-        #emergency_msg = std_msgs.msg.Bool()
-        #emergency_msg.data = False
-        #self.emergency_publisher.publish(emergency_msg)
     
     def handle_back_to_start(self):
         self.get_logger().info("Handling drive back to start point command")
         back_to_start_msg = std_msgs.msg.Bool()
         back_to_start_msg.data = True
         self.back_to_start_publisher.publish(back_to_start_msg)
-
-    def handle_emergency_stop(self):
-        self.get_logger().info("Performing emergency stop")
-        emergency_msg = std_msgs.msg.Bool()
-        emergency_msg.data = True
-        self.emergency_publisher.publish(emergency_msg)
 
     def handle_new_goal(self, numerical_detail, text_detail):
         if numerical_detail and len(numerical_detail) >= 2:

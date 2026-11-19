@@ -5,7 +5,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from std_msgs.msg import String
-import re
 
 
 COMMAND_TEXT = {
